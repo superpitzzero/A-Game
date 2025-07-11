@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Juego 2D - Círculo móvil</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #222;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background-color: #eee;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="600" height="400"></canvas>
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const circle = {
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    radius: 20,
+    speed: 5,
+  };
+
+  const keys = {
+    w: false,
+    a: false,
+    s: false,
+    d: false,
+  };
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'w') keys.w = true;
+    if (e.key.toLowerCase() === 'a') keys.a = true;
+    if (e.key.toLowerCase() === 's') keys.s = true;
+    if (e.key.toLowerCase() === 'd') keys.d = true;
+  });
+
+  window.addEventListener('keyup', (e) => {
+    if (e.key.toLowerCase() === 'w') keys.w = false;
+    if (e.key.toLowerCase() === 'a') keys.a = false;
+    if (e.key.toLowerCase() === 's') keys.s = false;
+    if (e.key.toLowerCase() === 'd') keys.d = false;
+  });
+
+  function update() {
+    if (keys.w && circle.y - circle.radius > 0) circle.y -= circle.speed;
+    if (keys.s && circle.y + circle.radius < canvas.height) circle.y += circle.speed;
+    if (keys.a && circle.x - circle.radius > 0) circle.x -= circle.speed;
+    if (keys.d && circle.x + circle.radius < canvas.width) circle.x += circle.speed;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = 'blue';
+    ctx.beginPath();
+    ctx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+  }
+
+  gameLoop();
+</script>
+</body>
+</html>
