@@ -13,6 +13,8 @@
         .btn:hover { background: #1976d2; transform: scale(1.05); }
         .btn-google { background: #db4437; }
         .btn-google:hover { background: #c23321; }
+        .btn-ranking { background: #ff9800; }
+        .btn-ranking:hover { background: #f57c00; }
         .hidden { display: none !important; }
 
         .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; }
@@ -30,6 +32,7 @@
     <div id="timer-display" style="font-size: 24px; font-weight: bold;">Tiempo: 0s</div>
     <div id="user-status" style="font-size: 12px; margin-bottom: 10px; opacity: 0.8;">Iniciando sistema...</div>
     <button class="btn" id="btn-login-trigger" onclick="openAuth()">Conectar Cuenta</button>
+    <button class="btn btn-ranking" onclick="openRanking()">Ver Ranking</button>
 </div>
 
 <div id="modal-auth" class="overlay">
@@ -38,9 +41,22 @@
         <button class="btn btn-google" style="width:100%" onclick="loginGoogle()">Usar Gmail</button>
         <p style="font-size: 12px; color: #666; margin: 15px 0;">O usa correo tradicional:</p>
         <input type="email" id="auth-email" placeholder="Email">
-        <input type="password" id="auth-pass" placeholder="Contraseña (mín. 6 caracteres)">
+        <input type="password" id="auth-pass" placeholder="Contraseña">
         <button class="btn" style="width:100%" onclick="loginEmail()">Entrar / Registrar</button>
         <button class="btn" style="background:#888; width:100%" onclick="closeAuth()">Cancelar</button>
+    </div>
+</div>
+
+<div id="overlay-ranking" class="overlay">
+    <div class="modal">
+        <h3 style="margin-top: 0;">TOP 10 MUNDIAL</h3>
+        <div style="max-height: 300px; overflow-y: auto;">
+            <table>
+                <thead><tr><th>Pos</th><th>Jugador</th><th>Tiempo</th></tr></thead>
+                <tbody id="global-rank-body"></tbody>
+            </table>
+        </div>
+        <button class="btn" style="background:#4caf50; width:100%; margin-top: 15px;" onclick="closeRanking()">Volver al Juego</button>
     </div>
 </div>
 
@@ -48,21 +64,11 @@
     <div class="modal">
         <h2 id="death-msg">¡GAME OVER!</h2>
         <p>Tu tiempo: <span id="final-time">0</span>s</p>
-        
         <div id="save-section">
-            <input type="text" id="player-nickname" placeholder="Tu Apodo (3 letras mín.)" maxlength="12">
+            <input type="text" id="player-nickname" placeholder="Tu Apodo" maxlength="12">
             <button class="btn" style="background:#4caf50; width:100%" onclick="processScore()">Guardar Récord Global</button>
         </div>
-
-        <div id="leaderboard-section">
-            <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-            <h4 style="margin: 0 0 10px 0;">TOP 5 MUNDIAL</h4>
-            <table id="leaderboard-table">
-                <thead><tr><th>Pos</th><th>Jugador</th><th>Tiempo</th></tr></thead>
-                <tbody id="leaderboard-body"></tbody>
-            </table>
-        </div>
-        <button class="btn" style="background: #f44336; width: 100%; margin-top: 15px;" onclick="location.reload()">Reiniciar Juego</button>
+        <button class="btn" style="background: #f44336; width: 100%; margin-top: 15px;" onclick="location.reload()">Reiniciar</button>
     </div>
 </div>
 
@@ -73,7 +79,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
 <script>
-    // CONFIGURACIÓN DE FIREBASE (Tus credenciales reales del proyecto "Supervivencia juego")
+    // CONFIGURACIÓN DE FIREBASE
     const firebaseConfig = {
       apiKey: "AIzaSyAPkKpyue0vBfLNMk9ivlXKVeYD9IJm6f0",
       authDomain: "supervivencia-juego.firebaseapp.com",
@@ -84,9 +90,7 @@
       measurementId: "G-2DW2EJ9PKD"
     };
 
-    let db = null;
-    let auth = null;
-    let currentUser = null;
+    let db, auth, currentUser;
     let isFirebaseReady = false;
 
     try {
@@ -99,21 +103,17 @@
             currentUser = user;
             const statusDiv = document.getElementById('user-status');
             const loginBtn = document.getElementById('btn-login-trigger');
-            
             if(user) {
                 statusDiv.innerText = `Conectado como: ${user.email}`;
                 loginBtn.classList.add('hidden');
             } else {
-                statusDiv.innerText = "Modo Local (Inicia sesión para el ranking global)";
+                statusDiv.innerText = "Modo Local (Inicia sesión para el ranking)";
                 loginBtn.classList.remove('hidden');
             }
         });
-    } catch (e) {
-        console.error("Error inicializando Firebase:", e);
-        document.getElementById('user-status').innerText = "Error: Firebase no responde.";
-    }
+    } catch (e) { console.error(e); }
 
-    // --- LÓGICA DEL JUEGO ---
+    // LÓGICA DEL JUEGO
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     let gameActive = true;
@@ -126,85 +126,69 @@
     const enemies = [];
     const keys = { w: false, a: false, s: false, d: false };
 
+    // --- FUNCIONES DE VENTANAS ---
     window.openAuth = () => { isPaused = true; document.getElementById('modal-auth').style.display = 'flex'; };
     window.closeAuth = () => { isPaused = false; document.getElementById('modal-auth').style.display = 'none'; lastTime = Date.now(); };
 
-    window.loginGoogle = async () => {
-        if (!isFirebaseReady) return alert("Firebase no está listo.");
-        
-        // AVISO DE PROTOCOLO LOCAL (Para evitar el error de tu captura)
-        if (window.location.protocol === 'file:') {
-            alert("⚠️ AVISO: Google bloquea Gmail cuando abres el archivo directamente (file://). \n\nPara que funcione el login con Gmail, debes usar un servidor (como Live Server en VSCode) o subirlo a GitHub Pages.");
-            return;
-        }
+    window.openRanking = async () => {
+        isPaused = true; // SE CONGELA EL JUEGO
+        const modal = document.getElementById('overlay-ranking');
+        const body = document.getElementById('global-rank-body');
+        modal.style.display = 'flex';
+        body.innerHTML = "<tr><td colspan='3'>Cargando...</td></tr>";
 
-        const provider = new firebase.auth.GoogleAuthProvider();
-        try { 
-            await auth.signInWithPopup(provider); 
-            closeAuth(); 
-        } catch (e) { 
-            alert("Error: " + e.message); 
+        if (isFirebaseReady) {
+            try {
+                const snap = await db.collection("leaderboard").orderBy("time", "desc").limit(10).get();
+                body.innerHTML = "";
+                if(snap.empty) body.innerHTML = "<tr><td colspan='3'>No hay récords aún</td></tr>";
+                snap.forEach((doc, i) => {
+                    const d = doc.data();
+                    body.innerHTML += `<tr><td>${i+1}</td><td>${d.name}</td><td>${d.time}s</td></tr>`;
+                });
+            } catch (e) { body.innerHTML = "<tr><td colspan='3'>Error al cargar</td></tr>"; }
+        } else {
+            body.innerHTML = "<tr><td colspan='3'>Firebase no conectado</td></tr>";
         }
+    };
+
+    window.closeRanking = () => {
+        document.getElementById('overlay-ranking').style.display = 'none';
+        isPaused = false; // SE REANUDA
+        lastTime = Date.now(); // Reseteamos el reloj para que no salte el tiempo
+    };
+
+    // --- LOGIN Y FIREBASE ---
+    window.loginGoogle = async () => {
+        if (window.location.protocol === 'file:') return alert("Sube el juego a GitHub para usar Gmail.");
+        try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); closeAuth(); } catch (e) { alert(e.message); }
     };
 
     window.loginEmail = async () => {
         const email = document.getElementById('auth-email').value;
         const pass = document.getElementById('auth-pass').value;
-        if(pass.length < 6) return alert("La contraseña debe tener al menos 6 caracteres.");
-        
-        try { 
-            await auth.signInWithEmailAndPassword(email, pass); 
-            closeAuth(); 
-        } catch (e) {
-            if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
-                try {
-                    await auth.createUserWithEmailAndPassword(email, pass);
-                    closeAuth();
-                } catch (regErr) { alert("Error al registrar: " + regErr.message); }
-            } else { alert("Error: " + e.message); }
+        try { await auth.signInWithEmailAndPassword(email, pass); closeAuth(); } 
+        catch (e) { 
+            try { await auth.createUserWithEmailAndPassword(email, pass); closeAuth(); } catch(e2){ alert(e2.message); }
         }
     };
 
     window.processScore = async () => {
         const nickname = document.getElementById('player-nickname').value.trim();
-        if (nickname.length < 3) return alert("Apodo demasiado corto.");
-
+        if (nickname.length < 3) return alert("Nombre muy corto.");
         if (isFirebaseReady && currentUser) {
-            try {
-                // Verificar si el apodo es único
-                const nameRef = db.collection("nicknames").doc(nickname.toLowerCase());
-                const nameDoc = await nameRef.get();
-
-                if (nameDoc.exists && nameDoc.data().uid !== currentUser.uid) {
-                    return alert("Este apodo ya está en uso.");
-                }
-
-                await nameRef.set({ uid: currentUser.uid });
-                await db.collection("leaderboard").doc(currentUser.uid).set({
-                    name: nickname,
-                    time: scoreToSave,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                }, { merge: true });
-                alert("¡Récord guardado en el Ranking Mundial!");
-            } catch (e) {
-                console.error(e);
-                alert("No se pudo conectar a la nube. Guardando localmente...");
-                saveLocal(nickname, scoreToSave);
-            }
-        } else {
-            saveLocal(nickname, scoreToSave);
-            alert("Guardado localmente en este navegador.");
+            const nameRef = db.collection("nicknames").doc(nickname.toLowerCase());
+            const nameDoc = await nameRef.get();
+            if (nameDoc.exists && nameDoc.data().uid !== currentUser.uid) return alert("Apodo en uso.");
+            await nameRef.set({ uid: currentUser.uid });
+            await db.collection("leaderboard").doc(currentUser.uid).set({
+                name: nickname, time: scoreToSave, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
         }
         location.reload();
     };
 
-    function saveLocal(name, time) {
-        let scores = JSON.parse(localStorage.getItem('local_records') || "[]");
-        scores.push({ name, time });
-        scores.sort((a, b) => b.time - a.time);
-        localStorage.setItem('local_records', JSON.stringify(scores.slice(0, 5)));
-    }
-
+    // --- BUCLE PRINCIPAL ---
     function init() {
         canvas.width = window.innerWidth * 0.9;
         canvas.height = window.innerHeight * 0.8;
@@ -216,7 +200,10 @@
     window.addEventListener('keyup', (e) => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; });
 
     function update() {
-        if (!gameActive || isPaused) { lastTime = Date.now(); return; }
+        if (!gameActive || isPaused) { 
+            lastTime = Date.now(); // Mantiene el reloj pausado
+            return; 
+        }
         let now = Date.now();
         totalElapsed += (now - lastTime);
         lastTime = now;
@@ -237,59 +224,33 @@
 
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        // Jugador
         ctx.fillStyle = player.color;
-        ctx.beginPath();
-        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = 'white'; ctx.lineWidth = 3; ctx.stroke();
-        // Enemigos
         ctx.fillStyle = '#ff4444';
-        enemies.forEach(e => {
-            ctx.beginPath(); ctx.arc(e.x, e.y, 12, 0, Math.PI * 2); ctx.fill();
-        });
+        enemies.forEach(e => { ctx.beginPath(); ctx.arc(e.x, e.y, 12, 0, Math.PI * 2); ctx.fill(); });
     }
 
-    async function gameOver() {
+    function gameOver() {
         gameActive = false;
         isPaused = true;
         scoreToSave = Math.floor(totalElapsed / 1000);
         document.getElementById('final-time').innerText = scoreToSave;
         document.getElementById('overlay-gameover').style.display = 'flex';
-
-        const body = document.getElementById('leaderboard-body');
-        body.innerHTML = "<tr><td colspan='3'>Cargando ranking...</td></tr>";
-
-        if (isFirebaseReady) {
-            try {
-                const snap = await db.collection("leaderboard").orderBy("time", "desc").limit(5).get();
-                body.innerHTML = "";
-                if(snap.empty) body.innerHTML = "<tr><td colspan='3'>¡Sé el primero en el ranking!</td></tr>";
-                snap.forEach((doc, i) => {
-                    const d = doc.data();
-                    body.innerHTML += `<tr><td>${i+1}</td><td>${d.name}</td><td>${d.time}s</td></tr>`;
-                });
-            } catch (e) { loadLocalTable(); }
-        } else { loadLocalTable(); }
-    }
-
-    function loadLocalTable() {
-        const body = document.getElementById('leaderboard-body');
-        const scores = JSON.parse(localStorage.getItem('local_records') || "[]");
-        body.innerHTML = scores.length ? "" : "<tr><td colspan='3'>No hay récords locales.</td></tr>";
-        scores.forEach((s, i) => {
-            body.innerHTML += `<tr><td>${i+1}</td><td>${s.name} (Local)</td><td>${s.time}s</td></tr>`;
-        });
     }
 
     function spawnEnemy() {
         if (!gameActive || isPaused) return;
-        const x = Math.random() < 0.5 ? -30 : canvas.width + 30;
-        const y = Math.random() * canvas.height;
-        enemies.push({ x, y, speed: 2 + (totalElapsed/10000) });
+        const side = Math.floor(Math.random() * 4);
+        let x, y;
+        if(side===0){ x=-20; y=Math.random()*canvas.height; }
+        else if(side===1){ x=canvas.width+20; y=Math.random()*canvas.height; }
+        else if(side===2){ x=Math.random()*canvas.width; y=-20; }
+        else { x=Math.random()*canvas.width; y=canvas.height+20; }
+        enemies.push({ x, y, speed: 2 + (totalElapsed/8000) });
     }
 
-    setInterval(spawnEnemy, 1500);
+    setInterval(spawnEnemy, 1200);
     function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
     init();
     gameLoop();
