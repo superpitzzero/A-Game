@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervivencia Pro - Global & Local</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        canvas { display: block; background: #f0f0f0; margin: 0 auto; border-radius: 4px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        
+        #ui-layer { position: absolute; top: 20px; left: 20px; color: #fff; z-index: 10; pointer-events: none; text-shadow: 1px 1px 2px #000; }
+        .btn { padding: 10px 15px; cursor: pointer; background: #2196f3; color: white; border: none; border-radius: 5px; font-weight: bold; pointer-events: auto; margin-bottom: 5px; display: block; width: 160px; transition: 0.3s; }
+        .btn:hover { background: #1976d2; transform: scale(1.05); }
+        .btn-google { background: #db4437; }
+        .btn-google:hover { background: #c23321; }
+        .hidden { display: none !important; }
+
+        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; }
+        .modal { background: white; padding: 25px; border-radius: 12px; text-align: center; width: 320px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); color: #333; }
+        
+        input { padding: 10px; width: 85%; margin: 8px 0; border: 1px solid #ccc; border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: center; }
+        th { background: #f8f9fa; }
+    </style>
+</head>
+<body>
+
+<div id="ui-layer">
+    <div id="timer-display" style="font-size: 24px; font-weight: bold;">Tiempo: 0s</div>
+    <div id="user-status" style="font-size: 12px; margin-bottom: 10px; opacity: 0.8;">Iniciando sistema...</div>
+    <button class="btn" id="btn-login-trigger" onclick="openAuth()">Conectar Cuenta</button>
+</div>
+
+<div id="modal-auth" class="overlay">
+    <div class="modal">
+        <h3>Identificación</h3>
+        <button class="btn btn-google" style="width:100%" onclick="loginGoogle()">Usar Gmail</button>
+        <p style="font-size: 12px; color: #666; margin: 15px 0;">O usa correo tradicional:</p>
+        <input type="email" id="auth-email" placeholder="Email">
+        <input type="password" id="auth-pass" placeholder="Contraseña (mín. 6 caracteres)">
+        <button class="btn" style="width:100%" onclick="loginEmail()">Entrar / Registrar</button>
+        <button class="btn" style="background:#888; width:100%" onclick="closeAuth()">Cancelar</button>
+    </div>
+</div>
+
+<div id="overlay-gameover" class="overlay">
+    <div class="modal">
+        <h2 id="death-msg">¡GAME OVER!</h2>
+        <p>Tu tiempo: <span id="final-time">0</span>s</p>
+        
+        <div id="save-section">
+            <input type="text" id="player-nickname" placeholder="Tu Apodo (3 letras mín.)" maxlength="12">
+            <button class="btn" style="background:#4caf50; width:100%" onclick="processScore()">Guardar Récord Global</button>
+        </div>
+
+        <div id="leaderboard-section">
+            <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+            <h4 style="margin: 0 0 10px 0;">TOP 5 MUNDIAL</h4>
+            <table id="leaderboard-table">
+                <thead><tr><th>Pos</th><th>Jugador</th><th>Tiempo</th></tr></thead>
+                <tbody id="leaderboard-body"></tbody>
+            </table>
+        </div>
+        <button class="btn" style="background: #f44336; width: 100%; margin-top: 15px;" onclick="location.reload()">Reiniciar Juego</button>
+    </div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<script>
+    // CONFIGURACIÓN DE FIREBASE (Tus credenciales reales del proyecto "Supervivencia juego")
+    const firebaseConfig = {
+      apiKey: "AIzaSyAPkKpyue0vBfLNMk9ivlXKVeYD9IJm6f0",
+      authDomain: "supervivencia-juego.firebaseapp.com",
+      projectId: "supervivencia-juego",
+      storageBucket: "supervivencia-juego.firebasestorage.app",
+      messagingSenderId: "131593009335",
+      appId: "1:131593009335:web:d5441210abdec4a21ff532",
+      measurementId: "G-2DW2EJ9PKD"
+    };
+
+    let db = null;
+    let auth = null;
+    let currentUser = null;
+    let isFirebaseReady = false;
+
+    try {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        auth = firebase.auth();
+        isFirebaseReady = true;
+
+        auth.onAuthStateChanged(user => {
+            currentUser = user;
+            const statusDiv = document.getElementById('user-status');
+            const loginBtn = document.getElementById('btn-login-trigger');
+            
+            if(user) {
+                statusDiv.innerText = `Conectado como: ${user.email}`;
+                loginBtn.classList.add('hidden');
+            } else {
+                statusDiv.innerText = "Modo Local (Inicia sesión para el ranking global)";
+                loginBtn.classList.remove('hidden');
+            }
+        });
+    } catch (e) {
+        console.error("Error inicializando Firebase:", e);
+        document.getElementById('user-status').innerText = "Error: Firebase no responde.";
+    }
+
+    // --- LÓGICA DEL JUEGO ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let gameActive = true;
+    let isPaused = false;
+    let totalElapsed = 0;
+    let lastTime = Date.now();
+    let scoreToSave = 0;
+
+    const player = { x: 0, y: 0, radius: 20, speed: 5, color: 'blue' };
+    const enemies = [];
+    const keys = { w: false, a: false, s: false, d: false };
+
+    window.openAuth = () => { isPaused = true; document.getElementById('modal-auth').style.display = 'flex'; };
+    window.closeAuth = () => { isPaused = false; document.getElementById('modal-auth').style.display = 'none'; lastTime = Date.now(); };
+
+    window.loginGoogle = async () => {
+        if (!isFirebaseReady) return alert("Firebase no está listo.");
+        
+        // AVISO DE PROTOCOLO LOCAL (Para evitar el error de tu captura)
+        if (window.location.protocol === 'file:') {
+            alert("⚠️ AVISO: Google bloquea Gmail cuando abres el archivo directamente (file://). \n\nPara que funcione el login con Gmail, debes usar un servidor (como Live Server en VSCode) o subirlo a GitHub Pages.");
+            return;
+        }
+
+        const provider = new firebase.auth.GoogleAuthProvider();
+        try { 
+            await auth.signInWithPopup(provider); 
+            closeAuth(); 
+        } catch (e) { 
+            alert("Error: " + e.message); 
+        }
+    };
+
+    window.loginEmail = async () => {
+        const email = document.getElementById('auth-email').value;
+        const pass = document.getElementById('auth-pass').value;
+        if(pass.length < 6) return alert("La contraseña debe tener al menos 6 caracteres.");
+        
+        try { 
+            await auth.signInWithEmailAndPassword(email, pass); 
+            closeAuth(); 
+        } catch (e) {
+            if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
+                try {
+                    await auth.createUserWithEmailAndPassword(email, pass);
+                    closeAuth();
+                } catch (regErr) { alert("Error al registrar: " + regErr.message); }
+            } else { alert("Error: " + e.message); }
+        }
+    };
+
+    window.processScore = async () => {
+        const nickname = document.getElementById('player-nickname').value.trim();
+        if (nickname.length < 3) return alert("Apodo demasiado corto.");
+
+        if (isFirebaseReady && currentUser) {
+            try {
+                // Verificar si el apodo es único
+                const nameRef = db.collection("nicknames").doc(nickname.toLowerCase());
+                const nameDoc = await nameRef.get();
+
+                if (nameDoc.exists && nameDoc.data().uid !== currentUser.uid) {
+                    return alert("Este apodo ya está en uso.");
+                }
+
+                await nameRef.set({ uid: currentUser.uid });
+                await db.collection("leaderboard").doc(currentUser.uid).set({
+                    name: nickname,
+                    time: scoreToSave,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                alert("¡Récord guardado en el Ranking Mundial!");
+            } catch (e) {
+                console.error(e);
+                alert("No se pudo conectar a la nube. Guardando localmente...");
+                saveLocal(nickname, scoreToSave);
+            }
+        } else {
+            saveLocal(nickname, scoreToSave);
+            alert("Guardado localmente en este navegador.");
+        }
+        location.reload();
+    };
+
+    function saveLocal(name, time) {
+        let scores = JSON.parse(localStorage.getItem('local_records') || "[]");
+        scores.push({ name, time });
+        scores.sort((a, b) => b.time - a.time);
+        localStorage.setItem('local_records', JSON.stringify(scores.slice(0, 5)));
+    }
+
+    function init() {
+        canvas.width = window.innerWidth * 0.9;
+        canvas.height = window.innerHeight * 0.8;
+        player.x = canvas.width / 2;
+        player.y = canvas.height / 2;
+    }
+
+    window.addEventListener('keydown', (e) => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; });
+    window.addEventListener('keyup', (e) => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; });
+
+    function update() {
+        if (!gameActive || isPaused) { lastTime = Date.now(); return; }
+        let now = Date.now();
+        totalElapsed += (now - lastTime);
+        lastTime = now;
+        document.getElementById('timer-display').innerText = `Tiempo: ${Math.floor(totalElapsed / 1000)}s`;
+
+        if (keys.w && player.y > player.radius) player.y -= player.speed;
+        if (keys.s && player.y < canvas.height - player.radius) player.y += player.speed;
+        if (keys.a && player.x > player.radius) player.x -= player.speed;
+        if (keys.d && player.x < canvas.width - player.radius) player.x += player.speed;
+
+        enemies.forEach(e => {
+            const angle = Math.atan2(player.y - e.y, player.x - e.x);
+            e.x += Math.cos(angle) * e.speed;
+            e.y += Math.sin(angle) * e.speed;
+            if (Math.hypot(player.x - e.x, player.y - e.y) < player.radius + 12) gameOver();
+        });
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Jugador
+        ctx.fillStyle = player.color;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white'; ctx.lineWidth = 3; ctx.stroke();
+        // Enemigos
+        ctx.fillStyle = '#ff4444';
+        enemies.forEach(e => {
+            ctx.beginPath(); ctx.arc(e.x, e.y, 12, 0, Math.PI * 2); ctx.fill();
+        });
+    }
+
+    async function gameOver() {
+        gameActive = false;
+        isPaused = true;
+        scoreToSave = Math.floor(totalElapsed / 1000);
+        document.getElementById('final-time').innerText = scoreToSave;
+        document.getElementById('overlay-gameover').style.display = 'flex';
+
+        const body = document.getElementById('leaderboard-body');
+        body.innerHTML = "<tr><td colspan='3'>Cargando ranking...</td></tr>";
+
+        if (isFirebaseReady) {
+            try {
+                const snap = await db.collection("leaderboard").orderBy("time", "desc").limit(5).get();
+                body.innerHTML = "";
+                if(snap.empty) body.innerHTML = "<tr><td colspan='3'>¡Sé el primero en el ranking!</td></tr>";
+                snap.forEach((doc, i) => {
+                    const d = doc.data();
+                    body.innerHTML += `<tr><td>${i+1}</td><td>${d.name}</td><td>${d.time}s</td></tr>`;
+                });
+            } catch (e) { loadLocalTable(); }
+        } else { loadLocalTable(); }
+    }
+
+    function loadLocalTable() {
+        const body = document.getElementById('leaderboard-body');
+        const scores = JSON.parse(localStorage.getItem('local_records') || "[]");
+        body.innerHTML = scores.length ? "" : "<tr><td colspan='3'>No hay récords locales.</td></tr>";
+        scores.forEach((s, i) => {
+            body.innerHTML += `<tr><td>${i+1}</td><td>${s.name} (Local)</td><td>${s.time}s</td></tr>`;
+        });
+    }
+
+    function spawnEnemy() {
+        if (!gameActive || isPaused) return;
+        const x = Math.random() < 0.5 ? -30 : canvas.width + 30;
+        const y = Math.random() * canvas.height;
+        enemies.push({ x, y, speed: 2 + (totalElapsed/10000) });
+    }
+
+    setInterval(spawnEnemy, 1500);
+    function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+    init();
+    gameLoop();
+</script>
+</body>
+</html>
